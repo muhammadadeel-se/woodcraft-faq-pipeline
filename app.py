@@ -1,5 +1,5 @@
 import os
-import pickle
+import json
 import numpy as np
 from flask import Flask, render_template, request, jsonify
 from markupsafe import escape
@@ -8,26 +8,41 @@ import faiss
 
 app = Flask(__name__)
 
-# 1. Load Embedding Model & FAISS Index once at startup
-print("Loading model and FAISS index...")
+# 1. Load Embedding Model
 model = SentenceTransformer('all-MiniLM-L6-v2')
 
-# Load index and metadata (faiss_index.bin and faq_ids.pkl or faq.json)
-index = faiss.read_index('faiss_index.bin')
+# Helper function expected by tests
+def generate_embedding(text):
+    return model.encode([text]).astype('float32')
 
-# Load FAQ data mapping if available
+# Load or create FAISS index
+index_file = 'faiss_index.bin'
+if os.path.exists(index_file):
+    faiss_index = faiss.read_index(index_file)
+else:
+    # Default 384 dimensions for all-MiniLM-L6-v2
+    faiss_index = faiss.IndexFlatL2(384)
+
+# Load FAQ data
 faq_data = []
 if os.path.exists('faq.json'):
-    import json
     with open('faq.json', 'r') as f:
         faq_data = json.load(f)
 
+# ----------------- ROUTES ----------------- #
+
 @app.route('/', methods=['GET'])
-def home():
+@app.route('/chat', methods=['GET'])
+def chat():
     return render_template('chat.html')
 
+@app.route('/api/faq', methods=['GET'])
+def get_faq():
+    return jsonify({'faqs': faq_data}), 200
+
+@app.route('/api/answer', methods=['POST'])
 @app.route('/ask', methods=['POST'])
-def ask():
+def answer():
     try:
         data = request.get_json(silent=True) or {}
         user_query = data.get('query', '')
@@ -38,19 +53,22 @@ def ask():
         if not clean_query:
             return jsonify({'error': 'Empty query provided'}), 400
             
-        # Perform RAG Vector Search using FAISS
-        query_vector = model.encode([clean_query]).astype('float32')
-        k = 1  # Top 1 matching result
-        distances, indices = index.search(query_vector, k)
+        # Vector Search
+        query_vector = generate_embedding(clean_query)
+        k = 1
         
-        # Retrieve answer based on index
-        idx = indices[0][0]
-        if faq_data and 0 <= idx < len(faq_data):
-            answer = faq_data[idx].get('answer', "I'm sorry, I couldn't find a matching answer in our FAQ.")
+        if faiss_index.ntotal > 0:
+            distances, indices = faiss_index.search(query_vector, k)
+            idx = indices[0][0]
+            if faq_data and 0 <= idx < len(faq_data):
+                ans = faq_data[idx].get('answer', "I couldn't find an exact answer in our FAQ.")
+            else:
+                ans = f"Query received: {clean_query}"
         else:
-            answer = f"Based on our furniture catalog, we received your query about: {clean_query}. (FAISS Index match index: {idx})"
+            ans = f"Query received: {clean_query}"
             
-        return jsonify({'answer': answer})
+        return jsonify({'answer': ans}), 200
+
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
