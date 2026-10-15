@@ -17,7 +17,7 @@ python build_index.py
 python app.py
 ```
 
-Then open http://127.0.0.1:5000/chat
+Then open http://127.0.0.1:8080/chat
 
 ## 3. Validate the app
 
