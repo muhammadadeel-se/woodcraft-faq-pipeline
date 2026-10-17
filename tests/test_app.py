@@ -1,4 +1,5 @@
 import pytest
+from unittest.mock import patch
 from app import app
 
 @pytest.fixture
@@ -8,44 +9,53 @@ def client():
         yield client
 
 def test_home_endpoint(client):
-    """Test GET request to home/index endpoint."""
+    """Test GET request to the home index page."""
     response = client.get('/')
     assert response.status_code == 200
 
 def test_answer_endpoint_success(client):
-    """Test valid query to /api/answer."""
-    payload = {"query": "What is the return policy?"}
+    """Test successful FAQ query submission."""
+    payload = {"query": "What is the return policy for custom furniture?"}
     response = client.post('/api/answer', json=payload)
     assert response.status_code == 200
     data = response.get_json()
     assert "answer" in data
 
 def test_answer_endpoint_empty_query(client):
-    """Test empty query string payload."""
+    """Test submission with an empty query string."""
     payload = {"query": ""}
     response = client.post('/api/answer', json=payload)
     assert response.status_code in [200, 400]
 
 def test_answer_endpoint_missing_json(client):
-    """Test request without JSON body or missing query field."""
-    response = client.post('/api/answer', data="not json", content_type="text/plain")
+    """Test request with non-JSON or missing body."""
+    response = client.post('/api/answer', data="plain text", content_type="text/plain")
     assert response.status_code in [400, 415, 500]
 
-def test_answer_endpoint_invalid_payload(client):
-    """Test JSON payload missing the query key."""
-    payload = {"wrong_key": "test"}
+def test_answer_endpoint_missing_query_key(client):
+    """Test JSON payload missing the 'query' key."""
+    payload = {"question": "Missing query key"}
     response = client.post('/api/answer', json=payload)
     assert response.status_code in [200, 400]
 
+def test_answer_endpoint_exception_handling(client):
+    """Test exception handling branch inside /api/answer."""
+    with patch('search.search_faq', side_effect=Exception("Database or Search Error")):
+        payload = {"query": "Test exception"}
+        response = client.post('/api/answer', json=payload)
+        assert response.status_code in [200, 500]
+        data = response.get_json()
+        assert data is not None
+
 def test_method_not_allowed(client):
-    """Test invalid HTTP method on /api/answer."""
+    """Test unsupported HTTP method on API endpoint."""
     response = client.get('/api/answer')
     assert response.status_code == 405
 
 def test_xss_sanitization(client):
-    """Test XSS script injection payload sanitization."""
-    payload = {"query": "<script>alert(1)</script>"}
+    """Test XSS script injection sanitization."""
+    payload = {"query": "<script>alert('xss')</script>"}
     response = client.post('/api/answer', json=payload)
     assert response.status_code == 200
     data = response.get_json()
-    assert "<script>alert(1)</script>" not in data.get("answer", "")
+    assert "<script>" not in data.get("answer", "")
